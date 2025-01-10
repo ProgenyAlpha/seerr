@@ -59,6 +59,7 @@
     "date-fns": "2.29.3",
     "dayjs": "1.11.7",
     "dns-caching": "^0.2.7",
+    "dompurify": "^3.2.3",
     "email-templates": "12.0.1",
     "express": "4.21.2",
     "express-openapi-validator": "4.13.8",
