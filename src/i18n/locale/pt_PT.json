@@ -1190,13 +1190,13 @@
   "components.RequestList.RequestItem.unknowntitle": "Título Desconhecido",
   "components.Selector.searchGenres": "Selecione os gêneros…",
   "components.Selector.searchKeywords": "Pesquisar palavras-chave…",
-  "component.BlocklistBlock.blocklistdate": "Data de inclusão na lista negra",
-  "components.Blocklist.blocklistsettings": "Definições da lista negra",
-  "component.BlocklistBlock.blocklistedby": "Colocado na lista negra por",
-  "component.BlocklistModal.blocklisting": "Lista negra",
-  "components.Blocklist.blocklistNotFoundError": "<strong>{title}2</strong> não está na lista negra.",
-  "components.Blocklist.blocklistSettingsDescription": "Faça a gestão dos conteúdos multimédia colocados na lista negra.",
-  "components.Blocklist.blocklistdate": "data",
-  "components.Blocklist.blocklistedby": "{date} por {user}",
-  "components.Blocklist.mediaName": "Nome"
+  "component.BlacklistBlock.blacklistdate": "Data de inclusão na lista negra",
+  "components.Blacklist.blacklistsettings": "Definições da lista negra",
+  "component.BlacklistBlock.blacklistedby": "Colocado na lista negra por",
+  "component.BlacklistModal.blacklisting": "Lista negra",
+  "components.Blacklist.blacklistNotFoundError": "<strong>{title}2</strong> não está na lista negra.",
+  "components.Blacklist.blacklistSettingsDescription": "Faça a gestão dos conteúdos multimédia colocados na lista negra.",
+  "components.Blacklist.blacklistdate": "data",
+  "components.Blacklist.blacklistedby": "{date} por {user}",
+  "components.Blacklist.mediaName": "Nome"
 }
