@@ -34,7 +34,7 @@ With more features on the way! Check out our [issue tracker](/../../issues) to s
 
 Check out our documentation for instructions on how to install and run Seerr:
 
-<https://docs.seerr.dev/getting-started/>
+https://docs.seerr.dev/getting-started/
 
 ## Preview
 
@@ -49,7 +49,7 @@ Check out our documentation for instructions on how to install and run Seerr:
 
 ## API Documentation
 
-You can access the API documentation from your local Seerr install at <http://localhost:5055/api-docs>
+You can access the API documentation from your local Seerr install at http://localhost:5055/api-docs
 
 ## Community
 
