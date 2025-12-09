@@ -39,7 +39,7 @@
     "@formatjs/intl-pluralrules": "5.4.6",
     "@formatjs/intl-utils": "3.8.4",
     "@formatjs/swc-plugin-experimental": "^0.4.0",
-    "@headlessui/react": "1.7.12",
+    "@headlessui/react": "2.2.9",
     "@heroicons/react": "2.2.0",
     "@supercharge/request-ip": "1.2.0",
     "@svgr/webpack": "6.5.1",
