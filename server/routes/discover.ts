@@ -26,6 +26,12 @@ import { Router } from 'express';
 import { sortBy } from 'lodash';
 import { z } from 'zod';
 
+// Content rating types for parental controls
+interface UserContentRatingLimits {
+  maxMovieRating?: string;
+  maxTvRating?: string;
+}
+
 export const createTmdbWithRegionLanguage = (user?: User): TheMovieDb => {
   const settings = getSettings();
 
@@ -47,6 +53,71 @@ export const createTmdbWithRegionLanguage = (user?: User): TheMovieDb => {
     discoverRegion,
     originalLanguage,
   });
+};
+
+/**
+ * Get the user's content rating limits (admin-enforced parental controls)
+ * These limits are set by admins and users cannot see or modify them
+ */
+export const getUserContentRatingLimits = (
+  user?: User
+): UserContentRatingLimits => {
+  return {
+    maxMovieRating: user?.settings?.maxMovieRating ?? undefined,
+    maxTvRating: user?.settings?.maxTvRating ?? undefined,
+  };
+};
+
+/**
+ * Apply certification limits to discover movie options
+ * Only applies if user has rating limits set and no explicit certification params
+ */
+const applyMovieCertificationLimits = (
+  options: {
+    certification?: string;
+    certificationLte?: string;
+    certificationCountry?: string;
+  },
+  limits: UserContentRatingLimits
+): { certificationLte?: string; certificationCountry?: string } => {
+  // If user has a movie rating limit and no explicit certification filter
+  if (
+    limits.maxMovieRating &&
+    !options.certification &&
+    !options.certificationLte
+  ) {
+    return {
+      certificationLte: limits.maxMovieRating,
+      certificationCountry: options.certificationCountry || 'US',
+    };
+  }
+  return {};
+};
+
+/**
+ * Apply certification limits to discover TV options
+ * Only applies if user has rating limits set and no explicit certification params
+ */
+const applyTvCertificationLimits = (
+  options: {
+    certification?: string;
+    certificationLte?: string;
+    certificationCountry?: string;
+  },
+  limits: UserContentRatingLimits
+): { certificationLte?: string; certificationCountry?: string } => {
+  // If user has a TV rating limit and no explicit certification filter
+  if (
+    limits.maxTvRating &&
+    !options.certification &&
+    !options.certificationLte
+  ) {
+    return {
+      certificationLte: limits.maxTvRating,
+      certificationCountry: options.certificationCountry || 'US',
+    };
+  }
+  return {};
 };
 
 const discoverRoutes = Router();
@@ -87,11 +158,22 @@ const ApiQuerySchema = QueryFilterOptions.omit({
 
 discoverRoutes.get('/movies', async (req, res, next) => {
   const tmdb = createTmdbWithRegionLanguage(req.user);
+  const ratingLimits = getUserContentRatingLimits(req.user);
 
   try {
     const query = ApiQuerySchema.parse(req.query);
     const keywords = query.keywords;
     const excludeKeywords = query.excludeKeywords;
+
+    // Apply user's content rating limits (parental controls)
+    const certificationOverrides = applyMovieCertificationLimits(
+      {
+        certification: query.certification,
+        certificationLte: query.certificationLte,
+        certificationCountry: query.certificationCountry,
+      },
+      ratingLimits
+    );
 
     const data = await tmdb.getDiscoverMovies({
       page: Number(query.page),
@@ -118,8 +200,11 @@ discoverRoutes.get('/movies', async (req, res, next) => {
       watchRegion: query.watchRegion,
       certification: query.certification,
       certificationGte: query.certificationGte,
-      certificationLte: query.certificationLte,
-      certificationCountry: query.certificationCountry,
+      certificationLte:
+        certificationOverrides.certificationLte ?? query.certificationLte,
+      certificationCountry:
+        certificationOverrides.certificationCountry ??
+        query.certificationCountry,
     });
 
     const media = await Media.getRelatedMedia(
@@ -173,6 +258,7 @@ discoverRoutes.get<{ language: string }>(
   '/movies/language/:language',
   async (req, res, next) => {
     const tmdb = createTmdbWithRegionLanguage(req.user);
+    const ratingLimits = getUserContentRatingLimits(req.user);
 
     try {
       const languages = await tmdb.getLanguages();
@@ -185,10 +271,18 @@ discoverRoutes.get<{ language: string }>(
         return next({ status: 404, message: 'Language not found.' });
       }
 
+      // Apply user's content rating limits (parental controls)
+      const certificationOverrides = applyMovieCertificationLimits(
+        {},
+        ratingLimits
+      );
+
       const data = await tmdb.getDiscoverMovies({
         page: Number(req.query.page),
         language: (req.query.language as string) ?? req.locale,
         originalLanguage: req.params.language,
+        certificationLte: certificationOverrides.certificationLte,
+        certificationCountry: certificationOverrides.certificationCountry,
       });
 
       const media = await Media.getRelatedMedia(
@@ -229,6 +323,7 @@ discoverRoutes.get<{ genreId: string }>(
   '/movies/genre/:genreId',
   async (req, res, next) => {
     const tmdb = createTmdbWithRegionLanguage(req.user);
+    const ratingLimits = getUserContentRatingLimits(req.user);
 
     try {
       const genres = await tmdb.getMovieGenres({
@@ -243,10 +338,18 @@ discoverRoutes.get<{ genreId: string }>(
         return next({ status: 404, message: 'Genre not found.' });
       }
 
+      // Apply user's content rating limits (parental controls)
+      const certificationOverrides = applyMovieCertificationLimits(
+        {},
+        ratingLimits
+      );
+
       const data = await tmdb.getDiscoverMovies({
         page: Number(req.query.page),
         language: (req.query.language as string) ?? req.locale,
         genre: req.params.genreId as string,
+        certificationLte: certificationOverrides.certificationLte,
+        certificationCountry: certificationOverrides.certificationCountry,
       });
 
       const media = await Media.getRelatedMedia(
@@ -287,14 +390,23 @@ discoverRoutes.get<{ studioId: string }>(
   '/movies/studio/:studioId',
   async (req, res, next) => {
     const tmdb = new TheMovieDb();
+    const ratingLimits = getUserContentRatingLimits(req.user);
 
     try {
       const studio = await tmdb.getStudio(Number(req.params.studioId));
+
+      // Apply user's content rating limits (parental controls)
+      const certificationOverrides = applyMovieCertificationLimits(
+        {},
+        ratingLimits
+      );
 
       const data = await tmdb.getDiscoverMovies({
         page: Number(req.query.page),
         language: (req.query.language as string) ?? req.locale,
         studio: req.params.studioId as string,
+        certificationLte: certificationOverrides.certificationLte,
+        certificationCountry: certificationOverrides.certificationCountry,
       });
 
       const media = await Media.getRelatedMedia(
@@ -333,6 +445,7 @@ discoverRoutes.get<{ studioId: string }>(
 
 discoverRoutes.get('/movies/upcoming', async (req, res, next) => {
   const tmdb = createTmdbWithRegionLanguage(req.user);
+  const ratingLimits = getUserContentRatingLimits(req.user);
 
   const now = new Date();
   const offset = now.getTimezoneOffset();
@@ -340,11 +453,19 @@ discoverRoutes.get('/movies/upcoming', async (req, res, next) => {
     .toISOString()
     .split('T')[0];
 
+  // Apply user's content rating limits (parental controls)
+  const certificationOverrides = applyMovieCertificationLimits(
+    {},
+    ratingLimits
+  );
+
   try {
     const data = await tmdb.getDiscoverMovies({
       page: Number(req.query.page),
       language: (req.query.language as string) ?? req.locale,
       primaryReleaseDateGte: date,
+      certificationLte: certificationOverrides.certificationLte,
+      certificationCountry: certificationOverrides.certificationCountry,
     });
 
     const media = await Media.getRelatedMedia(
@@ -380,11 +501,23 @@ discoverRoutes.get('/movies/upcoming', async (req, res, next) => {
 
 discoverRoutes.get('/tv', async (req, res, next) => {
   const tmdb = createTmdbWithRegionLanguage(req.user);
+  const ratingLimits = getUserContentRatingLimits(req.user);
 
   try {
     const query = ApiQuerySchema.parse(req.query);
     const keywords = query.keywords;
     const excludeKeywords = query.excludeKeywords;
+
+    // Apply user's content rating limits (parental controls)
+    const certificationOverrides = applyTvCertificationLimits(
+      {
+        certification: query.certification,
+        certificationLte: query.certificationLte,
+        certificationCountry: query.certificationCountry,
+      },
+      ratingLimits
+    );
+
     const data = await tmdb.getDiscoverTv({
       page: Number(query.page),
       sortBy: query.sortBy as SortOptions,
@@ -411,8 +544,11 @@ discoverRoutes.get('/tv', async (req, res, next) => {
       withStatus: query.status,
       certification: query.certification,
       certificationGte: query.certificationGte,
-      certificationLte: query.certificationLte,
-      certificationCountry: query.certificationCountry,
+      certificationLte:
+        certificationOverrides.certificationLte ?? query.certificationLte,
+      certificationCountry:
+        certificationOverrides.certificationCountry ??
+        query.certificationCountry,
     });
 
     const media = await Media.getRelatedMedia(
@@ -465,6 +601,7 @@ discoverRoutes.get<{ language: string }>(
   '/tv/language/:language',
   async (req, res, next) => {
     const tmdb = createTmdbWithRegionLanguage(req.user);
+    const ratingLimits = getUserContentRatingLimits(req.user);
 
     try {
       const languages = await tmdb.getLanguages();
@@ -477,10 +614,18 @@ discoverRoutes.get<{ language: string }>(
         return next({ status: 404, message: 'Language not found.' });
       }
 
+      // Apply user's content rating limits (parental controls)
+      const certificationOverrides = applyTvCertificationLimits(
+        {},
+        ratingLimits
+      );
+
       const data = await tmdb.getDiscoverTv({
         page: Number(req.query.page),
         language: (req.query.language as string) ?? req.locale,
         originalLanguage: req.params.language,
+        certificationLte: certificationOverrides.certificationLte,
+        certificationCountry: certificationOverrides.certificationCountry,
       });
 
       const media = await Media.getRelatedMedia(
@@ -521,6 +666,7 @@ discoverRoutes.get<{ genreId: string }>(
   '/tv/genre/:genreId',
   async (req, res, next) => {
     const tmdb = createTmdbWithRegionLanguage(req.user);
+    const ratingLimits = getUserContentRatingLimits(req.user);
 
     try {
       const genres = await tmdb.getTvGenres({
@@ -535,10 +681,18 @@ discoverRoutes.get<{ genreId: string }>(
         return next({ status: 404, message: 'Genre not found.' });
       }
 
+      // Apply user's content rating limits (parental controls)
+      const certificationOverrides = applyTvCertificationLimits(
+        {},
+        ratingLimits
+      );
+
       const data = await tmdb.getDiscoverTv({
         page: Number(req.query.page),
         language: (req.query.language as string) ?? req.locale,
         genre: req.params.genreId,
+        certificationLte: certificationOverrides.certificationLte,
+        certificationCountry: certificationOverrides.certificationCountry,
       });
 
       const media = await Media.getRelatedMedia(
@@ -579,14 +733,23 @@ discoverRoutes.get<{ networkId: string }>(
   '/tv/network/:networkId',
   async (req, res, next) => {
     const tmdb = new TheMovieDb();
+    const ratingLimits = getUserContentRatingLimits(req.user);
 
     try {
       const network = await tmdb.getNetwork(Number(req.params.networkId));
+
+      // Apply user's content rating limits (parental controls)
+      const certificationOverrides = applyTvCertificationLimits(
+        {},
+        ratingLimits
+      );
 
       const data = await tmdb.getDiscoverTv({
         page: Number(req.query.page),
         language: (req.query.language as string) ?? req.locale,
         network: Number(req.params.networkId),
+        certificationLte: certificationOverrides.certificationLte,
+        certificationCountry: certificationOverrides.certificationCountry,
       });
 
       const media = await Media.getRelatedMedia(
@@ -625,6 +788,7 @@ discoverRoutes.get<{ networkId: string }>(
 
 discoverRoutes.get('/tv/upcoming', async (req, res, next) => {
   const tmdb = createTmdbWithRegionLanguage(req.user);
+  const ratingLimits = getUserContentRatingLimits(req.user);
 
   const now = new Date();
   const offset = now.getTimezoneOffset();
@@ -632,11 +796,16 @@ discoverRoutes.get('/tv/upcoming', async (req, res, next) => {
     .toISOString()
     .split('T')[0];
 
+  // Apply user's content rating limits (parental controls)
+  const certificationOverrides = applyTvCertificationLimits({}, ratingLimits);
+
   try {
     const data = await tmdb.getDiscoverTv({
       page: Number(req.query.page),
       language: (req.query.language as string) ?? req.locale,
       firstAirDateGte: date,
+      certificationLte: certificationOverrides.certificationLte,
+      certificationCountry: certificationOverrides.certificationCountry,
     });
 
     const media = await Media.getRelatedMedia(
