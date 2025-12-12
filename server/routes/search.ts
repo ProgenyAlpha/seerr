@@ -1,8 +1,18 @@
 import TheMovieDb from '@server/api/themoviedb';
 import type {
   TmdbSearchMultiResponse,
-  TmdbSearchResult,
+  TmdbMovieResult,
+  TmdbTvResult,
+  TmdbPersonResult,
+  TmdbCollectionResult,
 } from '@server/api/themoviedb/interfaces';
+
+// Type alias for search results
+type TmdbSearchResult =
+  | TmdbMovieResult
+  | TmdbTvResult
+  | TmdbPersonResult
+  | TmdbCollectionResult;
 import Media from '@server/entity/Media';
 import { findSearchProvider } from '@server/lib/search';
 import logger from '@server/logger';
