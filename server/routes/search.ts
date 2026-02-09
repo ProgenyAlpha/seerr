@@ -1,18 +1,11 @@
 import TheMovieDb from '@server/api/themoviedb';
 import type {
-  TmdbSearchMultiResponse,
-  TmdbMovieResult,
-  TmdbTvResult,
-  TmdbPersonResult,
   TmdbCollectionResult,
+  TmdbMovieResult,
+  TmdbPersonResult,
+  TmdbSearchMultiResponse,
+  TmdbTvResult,
 } from '@server/api/themoviedb/interfaces';
-
-// Type alias for search results
-type TmdbSearchResult =
-  | TmdbMovieResult
-  | TmdbTvResult
-  | TmdbPersonResult
-  | TmdbCollectionResult;
 import Media from '@server/entity/Media';
 import { findSearchProvider } from '@server/lib/search';
 import logger from '@server/logger';
@@ -20,43 +13,78 @@ import { mapSearchResults } from '@server/models/Search';
 import { getUserContentRatingLimits } from '@server/routes/discover';
 import { Router } from 'express';
 
+// Type alias for search results
+type TmdbSearchResult =
+  | TmdbMovieResult
+  | TmdbTvResult
+  | TmdbPersonResult
+  | TmdbCollectionResult;
+
 // MPAA movie ratings in order from least to most restrictive
 const MOVIE_RATINGS = ['G', 'PG', 'PG-13', 'R', 'NC-17'];
 
 // TV ratings in order from least to most restrictive
 const TV_RATINGS = ['TV-Y', 'TV-Y7', 'TV-G', 'TV-PG', 'TV-14', 'TV-MA'];
 
+// Unrated/Not Rated values that should be blocked when parental controls are on
+const UNRATED_VALUES = ['NR', 'UR', 'Unrated', 'Not Rated', ''];
+
 /**
- * Check if a movie rating exceeds the max allowed
+ * Check if a movie should be filtered out based on rating
+ * Returns true if movie should be BLOCKED
  */
-const movieRatingExceedsLimit = (
-  rating: string | undefined,
+const shouldFilterMovie = (
+  rating: string | undefined | null,
   maxRating: string | undefined
 ): boolean => {
-  if (!maxRating || !rating) return false;
+  // No limit set = allow everything
+  if (!maxRating) return false;
+
+  // No rating or unrated content = BLOCK when parental controls enabled
+  if (!rating || UNRATED_VALUES.includes(rating)) {
+    return true;
+  }
+
   const ratingIndex = MOVIE_RATINGS.indexOf(rating);
   const maxIndex = MOVIE_RATINGS.indexOf(maxRating);
-  if (ratingIndex === -1 || maxIndex === -1) return false;
+
+  // Unknown rating not in our list = BLOCK (fail closed)
+  if (ratingIndex === -1) return true;
+  if (maxIndex === -1) return false;
+
   return ratingIndex > maxIndex;
 };
 
 /**
- * Check if a TV rating exceeds the max allowed
+ * Check if a TV show should be filtered out based on rating
+ * Returns true if TV show should be BLOCKED
  */
-const tvRatingExceedsLimit = (
-  rating: string | undefined,
+const shouldFilterTv = (
+  rating: string | undefined | null,
   maxRating: string | undefined
 ): boolean => {
-  if (!maxRating || !rating) return false;
+  // No limit set = allow everything
+  if (!maxRating) return false;
+
+  // No rating or unrated content = BLOCK when parental controls enabled
+  if (!rating || UNRATED_VALUES.includes(rating)) {
+    return true;
+  }
+
   const ratingIndex = TV_RATINGS.indexOf(rating);
   const maxIndex = TV_RATINGS.indexOf(maxRating);
-  if (ratingIndex === -1 || maxIndex === -1) return false;
+
+  // Unknown rating not in our list = BLOCK (fail closed)
+  if (ratingIndex === -1) return true;
+  if (maxIndex === -1) return false;
+
   return ratingIndex > maxIndex;
 };
 
 /**
  * Filter search results based on user's content rating limits
  * Fetches certification for each movie/TV result and filters accordingly
+ * Uses "fail closed" approach - if we can't determine rating, block it
  */
 const filterSearchResultsByRating = async (
   results: TmdbSearchResult[],
@@ -73,7 +101,12 @@ const filterSearchResultsByRating = async (
 
   for (const result of results) {
     try {
-      if (result.media_type === 'movie' && maxMovieRating) {
+      if (result.media_type === 'movie') {
+        if (!maxMovieRating) {
+          // No movie limit, allow all movies
+          filteredResults.push(result);
+          continue;
+        }
         // Get movie details with release dates (includes certification)
         const movieDetails = await tmdb.getMovie({ movieId: result.id });
         const usRelease = movieDetails.release_dates?.results?.find(
@@ -83,33 +116,51 @@ const filterSearchResultsByRating = async (
           (rd) => rd.certification
         )?.certification;
 
-        if (movieRatingExceedsLimit(certification, maxMovieRating)) {
+        if (shouldFilterMovie(certification, maxMovieRating)) {
           logger.debug(
-            `Filtering movie "${result.title}" (${certification}) - exceeds limit ${maxMovieRating}`,
+            `Filtering movie "${result.title}" (${
+              certification || 'NO RATING'
+            }) - blocked by parental controls (limit: ${maxMovieRating})`,
             { label: 'Search' }
           );
           continue;
         }
-      } else if (result.media_type === 'tv' && maxTvRating) {
+        filteredResults.push(result);
+      } else if (result.media_type === 'tv') {
+        if (!maxTvRating) {
+          // No TV limit, allow all TV
+          filteredResults.push(result);
+          continue;
+        }
         // Get TV details with content ratings
         const tvDetails = await tmdb.getTvShow({ tvId: result.id });
         const usRating = tvDetails.content_ratings?.results?.find(
           (r) => r.iso_3166_1 === 'US'
         );
 
-        if (tvRatingExceedsLimit(usRating?.rating, maxTvRating)) {
+        if (shouldFilterTv(usRating?.rating, maxTvRating)) {
           logger.debug(
-            `Filtering TV "${result.name}" (${usRating?.rating}) - exceeds limit ${maxTvRating}`,
+            `Filtering TV "${result.name}" (${
+              usRating?.rating || 'NO RATING'
+            }) - blocked by parental controls (limit: ${maxTvRating})`,
             { label: 'Search' }
           );
           continue;
         }
+        filteredResults.push(result);
+      } else {
+        // Person or collection results - allow through
+        filteredResults.push(result);
       }
-
-      filteredResults.push(result);
     } catch (e) {
-      // If we can't get certification, include the result (fail open)
-      filteredResults.push(result);
+      // FAIL CLOSED: If we can't get certification, BLOCK the result
+      logger.debug(
+        `Filtering "${
+          (result as TmdbMovieResult).title || (result as TmdbTvResult).name
+        }" - failed to get rating, blocking for safety`,
+        { label: 'Search' }
+      );
+      // Don't add to results - filtered out
     }
   }
 
