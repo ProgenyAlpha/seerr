@@ -8,8 +8,11 @@ import type {
 } from '@server/api/themoviedb/interfaces';
 import type { UserContentRatingLimits } from '@server/constants/contentRatings';
 import {
+  MOVIE_RATINGS,
+  UNRATED_VALUES,
   shouldFilterMovie,
   shouldFilterTv,
+  type MovieRating,
 } from '@server/constants/contentRatings';
 import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
@@ -69,6 +72,7 @@ export const getUserContentRatingLimits = (
     maxMovieRating: user?.settings?.maxMovieRating ?? undefined,
     maxTvRating: user?.settings?.maxTvRating ?? undefined,
     blockUnrated: user?.settings?.blockUnrated ?? false,
+    blockAdult: user?.settings?.blockAdult ?? false,
   };
 };
 
@@ -136,6 +140,60 @@ const BACKFILL_THRESHOLD = 15;
  * When filtering drops results below BACKFILL_THRESHOLD, fetches one
  * additional TMDB page to compensate for the gap.
  */
+/**
+ * Extract the best US movie certification from release dates.
+ * Collects ALL US release date certifications, excludes NR/unrated
+ * (so unrated director's cuts don't override a theatrical R rating),
+ * and returns the most restrictive one found.
+ * Falls back to international ratings if no US rating exists.
+ */
+const getMovieCertFromDetails = (
+  releaseDates: {
+    iso_3166_1: string;
+    release_dates: { certification: string }[];
+  }[]
+): string | undefined => {
+  const usRelease = releaseDates.find((r) => r.iso_3166_1 === 'US');
+  const usCerts: string[] = [];
+
+  if (usRelease?.release_dates) {
+    for (const rd of usRelease.release_dates) {
+      if (rd.certification && !UNRATED_VALUES.includes(rd.certification)) {
+        usCerts.push(rd.certification);
+      }
+    }
+  }
+
+  if (usCerts.length > 0) {
+    // Return the most restrictive US rating
+    let best = usCerts[0];
+    let bestIdx = MOVIE_RATINGS.indexOf(best as MovieRating);
+    for (const c of usCerts) {
+      const idx = MOVIE_RATINGS.indexOf(c as MovieRating);
+      if (idx > bestIdx) {
+        bestIdx = idx;
+        best = c;
+      }
+    }
+    return best;
+  }
+
+  // Fallback: check all countries for a known MPAA-equivalent rating
+  for (const release of releaseDates) {
+    for (const rd of release.release_dates || []) {
+      if (
+        rd.certification &&
+        !UNRATED_VALUES.includes(rd.certification) &&
+        MOVIE_RATINGS.indexOf(rd.certification as MovieRating) !== -1
+      ) {
+        return rd.certification;
+      }
+    }
+  }
+
+  return undefined;
+};
+
 const filterMovieBatch = async (
   movies: TmdbMovieResult[],
   tmdb: TheMovieDb,
@@ -144,22 +202,27 @@ const filterMovieBatch = async (
   const settled = await Promise.allSettled(
     movies.map(async (movie) => {
       const details = await tmdb.getMovie({ movieId: movie.id });
-      const usRelease = details.release_dates?.results?.find(
-        (r) => r.iso_3166_1 === 'US'
+      const cert = getMovieCertFromDetails(
+        details.release_dates?.results ?? []
       );
-      const cert = usRelease?.release_dates?.find(
-        (rd) => rd.certification
-      )?.certification;
-      return { movie, cert };
+      return { movie, cert, title: details.title };
     })
   );
 
   const filtered: TmdbMovieResult[] = [];
   for (const outcome of settled) {
     if (outcome.status !== 'fulfilled') continue;
-    const { movie, cert } = outcome.value;
-    if (!shouldFilterMovie(cert, limits.maxMovieRating, true)) {
+    const { movie, cert, title } = outcome.value;
+    if (!shouldFilterMovie(cert, limits.maxMovieRating, limits.blockUnrated)) {
       filtered.push(movie);
+    } else {
+      logger.debug('Blocked movie by rating (post-filter)', {
+        label: 'Content Filtering',
+        movieId: movie.id,
+        movieTitle: title,
+        certification: cert ?? 'unrated',
+        maxRating: limits.maxMovieRating,
+      });
     }
   }
   return filtered;
@@ -169,17 +232,32 @@ const postFilterDiscoverMovies = async (
   results: TmdbMovieResult[],
   tmdb: TheMovieDb,
   limits: UserContentRatingLimits,
-  fetchNextPage?: () => Promise<TmdbMovieResult[] | null>
+  fetchNextPage?: () => Promise<TmdbMovieResult[] | null>,
+  preFiltered = true
 ): Promise<TmdbMovieResult[]> => {
-  if (!limits.blockUnrated) return results;
+  // Free in-memory filter: remove TMDB adult-flagged content
+  let filtered = limits.blockAdult
+    ? results.filter((movie) => !movie.adult)
+    : results;
 
-  const filtered = await filterMovieBatch(results, tmdb, limits);
+  // When certification.lte was already applied (preFiltered=true),
+  // only run expensive per-item checks for blockUnrated.
+  // When not pre-filtered (e.g. trending), also check maxRating.
+  const needsPostFilter = preFiltered
+    ? limits.blockUnrated
+    : limits.blockUnrated || !!limits.maxMovieRating;
+  if (!needsPostFilter) return filtered;
+
+  filtered = await filterMovieBatch(filtered, tmdb, limits);
 
   // Backfill: if too many results were removed, grab one more page
   if (filtered.length < BACKFILL_THRESHOLD && fetchNextPage) {
     const nextResults = await fetchNextPage();
     if (nextResults && nextResults.length > 0) {
-      const nextFiltered = await filterMovieBatch(nextResults, tmdb, limits);
+      const nextInput = limits.blockAdult
+        ? nextResults.filter((movie) => !movie.adult)
+        : nextResults;
+      const nextFiltered = await filterMovieBatch(nextInput, tmdb, limits);
       filtered.push(...nextFiltered);
     }
   }
@@ -198,16 +276,24 @@ const filterTvBatch = async (
       const usRating = details.content_ratings?.results?.find(
         (r) => r.iso_3166_1 === 'US'
       );
-      return { show, cert: usRating?.rating };
+      return { show, cert: usRating?.rating, title: details.name };
     })
   );
 
   const filtered: TmdbTvResult[] = [];
   for (const outcome of settled) {
     if (outcome.status !== 'fulfilled') continue;
-    const { show, cert } = outcome.value;
-    if (!shouldFilterTv(cert, limits.maxTvRating, true)) {
+    const { show, cert, title } = outcome.value;
+    if (!shouldFilterTv(cert, limits.maxTvRating, limits.blockUnrated)) {
       filtered.push(show);
+    } else {
+      logger.debug('Blocked TV show by rating (post-filter)', {
+        label: 'Content Filtering',
+        tvId: show.id,
+        tvTitle: title,
+        certification: cert ?? 'unrated',
+        maxRating: limits.maxTvRating,
+      });
     }
   }
   return filtered;
@@ -217,9 +303,16 @@ const postFilterDiscoverTv = async (
   results: TmdbTvResult[],
   tmdb: TheMovieDb,
   limits: UserContentRatingLimits,
-  fetchNextPage?: () => Promise<TmdbTvResult[] | null>
+  fetchNextPage?: () => Promise<TmdbTvResult[] | null>,
+  preFiltered = true
 ): Promise<TmdbTvResult[]> => {
-  if (!limits.blockUnrated) return results;
+  // When certification.lte was already applied (preFiltered=true),
+  // only run expensive per-item checks for blockUnrated.
+  // When not pre-filtered (e.g. trending), also check maxRating.
+  const needsPostFilter = preFiltered
+    ? limits.blockUnrated
+    : limits.blockUnrated || !!limits.maxTvRating;
+  if (!needsPostFilter) return results;
 
   const filtered = await filterTvBatch(results, tmdb, limits);
 
@@ -334,12 +427,12 @@ discoverRoutes.get('/movies', async (req, res, next) => {
       ratingLimits,
       currentPage < data.total_pages
         ? async () =>
-            (
-              await tmdb.getDiscoverMovies({
-                page: currentPage + 1,
-                ...discoverOpts,
-              })
-            ).results
+          (
+            await tmdb.getDiscoverMovies({
+              page: currentPage + 1,
+              ...discoverOpts,
+            })
+          ).results
         : undefined
     );
 
@@ -432,12 +525,12 @@ discoverRoutes.get<{ language: string }>(
         ratingLimits,
         langPage < data.total_pages
           ? async () =>
-              (
-                await tmdb.getDiscoverMovies({
-                  page: langPage + 1,
-                  ...langDiscoverOpts,
-                })
-              ).results
+            (
+              await tmdb.getDiscoverMovies({
+                page: langPage + 1,
+                ...langDiscoverOpts,
+              })
+            ).results
           : undefined
       );
 
@@ -519,12 +612,12 @@ discoverRoutes.get<{ genreId: string }>(
         ratingLimits,
         genrePage < data.total_pages
           ? async () =>
-              (
-                await tmdb.getDiscoverMovies({
-                  page: genrePage + 1,
-                  ...genreDiscoverOpts,
-                })
-              ).results
+            (
+              await tmdb.getDiscoverMovies({
+                page: genrePage + 1,
+                ...genreDiscoverOpts,
+              })
+            ).results
           : undefined
       );
 
@@ -596,12 +689,12 @@ discoverRoutes.get<{ studioId: string }>(
         ratingLimits,
         studioPage < data.total_pages
           ? async () =>
-              (
-                await tmdb.getDiscoverMovies({
-                  page: studioPage + 1,
-                  ...studioDiscoverOpts,
-                })
-              ).results
+            (
+              await tmdb.getDiscoverMovies({
+                page: studioPage + 1,
+                ...studioDiscoverOpts,
+              })
+            ).results
           : undefined
       );
 
@@ -675,12 +768,12 @@ discoverRoutes.get('/movies/upcoming', async (req, res, next) => {
       ratingLimits,
       upcomingMoviePage < data.total_pages
         ? async () =>
-            (
-              await tmdb.getDiscoverMovies({
-                page: upcomingMoviePage + 1,
-                ...upcomingMovieOpts,
-              })
-            ).results
+          (
+            await tmdb.getDiscoverMovies({
+              page: upcomingMoviePage + 1,
+              ...upcomingMovieOpts,
+            })
+          ).results
         : undefined
     );
 
@@ -779,8 +872,8 @@ discoverRoutes.get('/tv', async (req, res, next) => {
       ratingLimits,
       tvPage < data.total_pages
         ? async () =>
-            (await tmdb.getDiscoverTv({ page: tvPage + 1, ...tvDiscoverOpts }))
-              .results
+          (await tmdb.getDiscoverTv({ page: tvPage + 1, ...tvDiscoverOpts }))
+            .results
         : undefined
     );
 
@@ -872,12 +965,12 @@ discoverRoutes.get<{ language: string }>(
         ratingLimits,
         tvLangPage < data.total_pages
           ? async () =>
-              (
-                await tmdb.getDiscoverTv({
-                  page: tvLangPage + 1,
-                  ...tvLangOpts,
-                })
-              ).results
+            (
+              await tmdb.getDiscoverTv({
+                page: tvLangPage + 1,
+                ...tvLangOpts,
+              })
+            ).results
           : undefined
       );
 
@@ -959,12 +1052,12 @@ discoverRoutes.get<{ genreId: string }>(
         ratingLimits,
         tvGenrePage < data.total_pages
           ? async () =>
-              (
-                await tmdb.getDiscoverTv({
-                  page: tvGenrePage + 1,
-                  ...tvGenreOpts,
-                })
-              ).results
+            (
+              await tmdb.getDiscoverTv({
+                page: tvGenrePage + 1,
+                ...tvGenreOpts,
+              })
+            ).results
           : undefined
       );
 
@@ -1036,12 +1129,12 @@ discoverRoutes.get<{ networkId: string }>(
         ratingLimits,
         tvNetworkPage < data.total_pages
           ? async () =>
-              (
-                await tmdb.getDiscoverTv({
-                  page: tvNetworkPage + 1,
-                  ...tvNetworkOpts,
-                })
-              ).results
+            (
+              await tmdb.getDiscoverTv({
+                page: tvNetworkPage + 1,
+                ...tvNetworkOpts,
+              })
+            ).results
           : undefined
       );
 
@@ -1112,12 +1205,12 @@ discoverRoutes.get('/tv/upcoming', async (req, res, next) => {
       ratingLimits,
       upcomingTvPage < data.total_pages
         ? async () =>
-            (
-              await tmdb.getDiscoverTv({
-                page: upcomingTvPage + 1,
-                ...upcomingTvOpts,
-              })
-            ).results
+          (
+            await tmdb.getDiscoverTv({
+              page: upcomingTvPage + 1,
+              ...upcomingTvOpts,
+            })
+          ).results
         : undefined
     );
 
@@ -1153,6 +1246,12 @@ discoverRoutes.get('/tv/upcoming', async (req, res, next) => {
 
 discoverRoutes.get('/trending', async (req, res, next) => {
   const tmdb = createTmdbWithRegionLanguage(req.user);
+  const ratingLimits = getUserContentRatingLimits(req.user);
+  const hasLimits =
+    ratingLimits.maxMovieRating ||
+    ratingLimits.maxTvRating ||
+    ratingLimits.blockUnrated ||
+    ratingLimits.blockAdult;
 
   try {
     const data = await tmdb.getAllTrending({
@@ -1160,35 +1259,68 @@ discoverRoutes.get('/trending', async (req, res, next) => {
       language: (req.query.language as string) ?? req.locale,
     });
 
+    // Post-filter trending results if user has any parental controls
+    let filteredResults = data.results;
+    if (hasLimits) {
+      const movieResults = data.results.filter(isMovie) as TmdbMovieResult[];
+      const tvResults = data.results.filter(
+        (r) => !isMovie(r) && !isPerson(r) && !isCollection(r)
+      ) as TmdbTvResult[];
+      const otherResults = data.results.filter(
+        (r) => isPerson(r) || isCollection(r)
+      );
+
+      const filteredMovies = await postFilterDiscoverMovies(
+        movieResults,
+        tmdb,
+        ratingLimits,
+        undefined,
+        false // trending has no certification.lte pre-filter
+      );
+      const filteredTv = await postFilterDiscoverTv(
+        tvResults,
+        tmdb,
+        ratingLimits,
+        undefined,
+        false // trending has no certification.lte pre-filter
+      );
+
+      filteredResults = [
+        ...filteredMovies,
+        ...filteredTv,
+        ...otherResults,
+      ] as typeof data.results;
+    }
+
     const media = await Media.getRelatedMedia(
       req.user,
-      data.results.map((result) => result.id)
+      filteredResults.map((result) => result.id)
     );
 
     return res.status(200).json({
       page: data.page,
       totalPages: data.total_pages,
       totalResults: data.total_results,
-      results: data.results.map((result) =>
+      results: filteredResults.map((result) =>
         isMovie(result)
           ? mapMovieResult(
-              result,
-              media.find(
-                (med) =>
-                  med.tmdbId === result.id && med.mediaType === MediaType.MOVIE
-              )
+            result,
+            media.find(
+              (med) =>
+                med.tmdbId === result.id && med.mediaType === MediaType.MOVIE
             )
+          )
           : isPerson(result)
             ? mapPersonResult(result)
             : isCollection(result)
               ? mapCollectionResult(result)
               : mapTvResult(
-                  result,
-                  media.find(
-                    (med) =>
-                      med.tmdbId === result.id && med.mediaType === MediaType.TV
-                  )
+                result,
+                media.find(
+                  (med) =>
+                    med.tmdbId === result.id && med.mediaType === MediaType.TV
                 )
+              )
       ),
     });
   } catch (e) {
