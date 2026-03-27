@@ -39,6 +39,9 @@ export class UserSettings {
   @Column({ nullable: true })
   public originalLanguage?: string;
 
+  @Column({ type: 'varchar', nullable: true, select: false, unique: true })
+  public apiKey?: string | null;
+
   @Column({ nullable: true })
   public pgpKey?: string;
 

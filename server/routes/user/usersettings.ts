@@ -22,6 +22,7 @@ import {
 } from '@server/utils/profileMiddleware';
 import { Router } from 'express';
 import net from 'net';
+import { randomUUID } from 'node:crypto';
 import { Not } from 'typeorm';
 import { canMakePermissionsChange } from '.';
 
@@ -163,6 +164,84 @@ userSettingsRoutes.post<
     return next({ status: 500, message: e.message });
   }
 });
+
+userSettingsRoutes.get<{ id: string }, { hasApiKey: boolean }>(
+  '/api-key',
+  isOwnProfile(),
+  async (req, res, next) => {
+    const userSettingsRepository = getRepository(UserSettings);
+
+    try {
+      const settings = await userSettingsRepository.findOne({
+        where: { user: { id: Number(req.params.id) } },
+        select: ['id', 'apiKey'],
+      });
+
+      return res.status(200).json({ hasApiKey: !!settings?.apiKey });
+    } catch (e) {
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
+userSettingsRoutes.post<{ id: string }, { apiKey: string }>(
+  '/api-key',
+  isOwnProfile(),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+
+    try {
+      const user = await userRepository.findOne({
+        where: { id: Number(req.params.id) },
+      });
+
+      if (!user) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      if (!user.settings) {
+        user.settings = new UserSettings({ user });
+      }
+
+      const apiKey = Buffer.from(`${Date.now()}${randomUUID()}`).toString(
+        'base64'
+      );
+      user.settings.apiKey = apiKey;
+      await userRepository.save(user);
+
+      return res.status(200).json({ apiKey });
+    } catch (e) {
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
+userSettingsRoutes.delete<{ id: string }>(
+  '/api-key',
+  isOwnProfile(),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+
+    try {
+      const user = await userRepository.findOne({
+        where: { id: Number(req.params.id) },
+      });
+
+      if (!user) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      if (user.settings) {
+        user.settings.apiKey = null;
+        await userRepository.save(user);
+      }
+
+      return res.status(204).send();
+    } catch (e) {
+      next({ status: 500, message: e.message });
+    }
+  }
+);
 
 userSettingsRoutes.get<{ id: string }, { hasPassword: boolean }>(
   '/password',

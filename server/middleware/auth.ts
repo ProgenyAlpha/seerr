@@ -9,8 +9,9 @@ import { getSettings } from '@server/lib/settings';
 export const checkUser: Middleware = async (req, _res, next) => {
   const settings = getSettings();
   let user: User | undefined | null;
+  const apiKey = req.header('X-API-Key');
 
-  if (req.header('X-API-Key') === settings.main.apiKey) {
+  if (apiKey === settings.main.apiKey) {
     const userRepository = getRepository(User);
 
     let userId = 1; // Work on original administrator account
@@ -21,6 +22,13 @@ export const checkUser: Middleware = async (req, _res, next) => {
     }
 
     user = await userRepository.findOne({ where: { id: userId } });
+  } else if (apiKey) {
+    const userRepository = getRepository(User);
+    user = await userRepository
+      .createQueryBuilder('user')
+      .leftJoinAndSelect('user.settings', 'settings')
+      .where('settings.apiKey = :apiKey', { apiKey })
+      .getOne();
   } else if (req.session?.userId) {
     const userRepository = getRepository(User);
 

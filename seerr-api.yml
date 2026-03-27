@@ -4932,6 +4932,65 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserSettings'
+  /user/{userId}/settings/api-key:
+    get:
+      summary: Check if user has an API key
+      description: Returns whether the user has a personal API key configured. Users can only check their own API key status.
+      tags:
+        - users
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: number
+      responses:
+        '200':
+          description: API key status returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hasApiKey:
+                    type: boolean
+                    example: false
+    post:
+      summary: Generate or regenerate a personal API key
+      description: Generates a new personal API key for the user. If a key already exists, it is replaced. The key is returned once and cannot be retrieved again. Users can only manage their own API key.
+      tags:
+        - users
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: number
+      responses:
+        '200':
+          description: API key generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  apiKey:
+                    type: string
+                    example: 'MTcxMDAwMDAwMDAwMGE1YjNjNGQtZTZmNy00...'
+    delete:
+      summary: Revoke personal API key
+      description: Revokes the user's personal API key. Users can only revoke their own key.
+      tags:
+        - users
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: number
+      responses:
+        '204':
+          description: API key revoked
   /user/{userId}/settings/password:
     get:
       summary: Get password page informatiom
