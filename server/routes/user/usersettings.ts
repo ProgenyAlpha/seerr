@@ -203,9 +203,7 @@ userSettingsRoutes.post<{ id: string }, { apiKey: string }>(
         user.settings = new UserSettings({ user });
       }
 
-      const apiKey = Buffer.from(`${Date.now()}${randomUUID()}`).toString(
-        'base64'
-      );
+      const apiKey = Buffer.from(randomUUID()).toString('base64');
       user.settings.apiKey = apiKey;
       await userRepository.save(user);
 
