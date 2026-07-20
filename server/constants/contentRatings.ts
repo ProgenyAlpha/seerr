@@ -64,6 +64,31 @@ export function shouldFilterTv(
   return ratingIndex > maxIndex;
 }
 
+// Certification list a discover query should be restricted to, or
+// undefined when no query-side filter applies. An unrecognized
+// maxRating collapses to the most restrictive rating.
+export function getAllowedRatings(
+  mediaType: 'movie' | 'tv',
+  limits: UserContentRatingLimits
+): string[] | undefined {
+  const ratings: readonly string[] =
+    mediaType === 'movie' ? MOVIE_RATINGS : TV_RATINGS;
+  const maxRating =
+    mediaType === 'movie' ? limits.maxMovieRating : limits.maxTvRating;
+
+  if (!maxRating) {
+    return limits.blockUnrated ? [...ratings] : undefined;
+  }
+
+  const maxIndex = ratings.indexOf(maxRating);
+
+  if (maxIndex === -1) {
+    return [ratings[0]];
+  }
+
+  return ratings.slice(0, maxIndex + 1);
+}
+
 export function getMovieRatingOptions(): { value: string; label: string }[] {
   return MOVIE_RATINGS.map((rating) => ({ value: rating, label: rating }));
 }
