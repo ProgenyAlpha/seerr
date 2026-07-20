@@ -35,8 +35,6 @@ const messages = defineMessages(
     maxtvratingUnratedWarning:
       'Setting a TV rating limit hides shows that have no US TV rating. Most popular shows are rated; much of the wider catalog is not.',
     norestriction: 'No Restriction',
-    notYetEnforced:
-      'Rating limits are saved but not yet enforced. This user can still browse and request all content until enforcement is added in a follow-up update.',
     blockunrated: 'Block Unrated Content',
     blockunratedTip:
       'Block content that has no rating (NR, Unrated). When disabled, unrated content is allowed through.',
@@ -102,10 +100,6 @@ const UserParentalControlsSettings = () => {
           {intl.formatMessage(messages.parentalcontrolsdescription)}
         </p>
       </div>
-      <Alert
-        title={intl.formatMessage(messages.notYetEnforced)}
-        type="warning"
-      />
       <Formik
         initialValues={{
           maxMovieRating: data?.maxMovieRating ?? '',
