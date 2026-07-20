@@ -1696,6 +1696,7 @@
   "i18n.unavailable": "Unavailable",
   "i18n.usersettings": "User Settings",
   "i18n.view": "View",
+  "pages.contentrestricted": "Content Restricted",
   "pages.errormessagewithcode": "{statusCode} - {error}",
   "pages.internalservererror": "Internal Server Error",
   "pages.oops": "Oops",
