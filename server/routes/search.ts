@@ -2,6 +2,7 @@ import TheMovieDb from '@server/api/themoviedb';
 import type { TmdbSearchMultiResponse } from '@server/api/themoviedb/interfaces';
 import Media from '@server/entity/Media';
 import {
+  coalescePages,
   filterMixedResults,
   getUserContentRatingLimits,
 } from '@server/lib/contentRating';
@@ -15,30 +16,55 @@ const searchRoutes = Router();
 searchRoutes.get('/', async (req, res, next) => {
   const queryString = req.query.query as string;
   const searchProvider = findSearchProvider(queryString.toLowerCase());
-  let results: TmdbSearchMultiResponse;
+  const limits = getUserContentRatingLimits(req.user);
 
   try {
+    let page: number;
+    let totalPages: number;
+    let totalResults: number;
+    let filteredResults: TmdbSearchMultiResponse['results'];
+
     if (searchProvider) {
       const [id] = queryString
         .toLowerCase()
         .match(searchProvider.pattern) as RegExpMatchArray;
-      results = await searchProvider.search({
+      const results = await searchProvider.search({
         id,
         language: (req.query.language as string) ?? req.locale,
         query: queryString,
       });
+      page = results.page;
+      totalPages = results.total_pages;
+      totalResults = results.total_results;
+      filteredResults = await filterMixedResults(results.results, limits);
+    } else if (limits) {
+      const tmdb = new TheMovieDb();
+      const coalesced = await coalescePages(
+        Number(req.query.page) || 1,
+        (p) =>
+          tmdb.searchMulti({
+            query: queryString,
+            page: p,
+            language: (req.query.language as string) ?? req.locale,
+          }),
+        (results) => filterMixedResults(results, limits)
+      );
+      page = coalesced.page;
+      totalPages = coalesced.totalPages;
+      totalResults = coalesced.totalResults;
+      filteredResults = coalesced.results;
     } else {
       const tmdb = new TheMovieDb();
-
-      results = await tmdb.searchMulti({
+      const results = await tmdb.searchMulti({
         query: queryString,
         page: Number(req.query.page),
         language: (req.query.language as string) ?? req.locale,
       });
+      page = results.page;
+      totalPages = results.total_pages;
+      totalResults = results.total_results;
+      filteredResults = results.results;
     }
-
-    const limits = getUserContentRatingLimits(req.user);
-    const filteredResults = await filterMixedResults(results.results, limits);
 
     const media = await Media.getRelatedMedia(
       req.user,
@@ -49,9 +75,9 @@ searchRoutes.get('/', async (req, res, next) => {
     );
 
     return res.status(200).json({
-      page: results.page,
-      totalPages: results.total_pages,
-      totalResults: results.total_results,
+      page,
+      totalPages,
+      totalResults,
       results: mapSearchResults(filteredResults, media),
     });
   } catch (e) {
