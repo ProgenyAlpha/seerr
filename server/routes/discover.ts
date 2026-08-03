@@ -13,6 +13,7 @@ import type {
   WatchlistResponse,
 } from '@server/interfaces/api/discoverInterfaces';
 import {
+  coalescePages,
   filterMixedResults,
   filterMoviesByRating,
   filterTvByRating,
@@ -761,18 +762,21 @@ discoverRoutes.get('/trending', async (req, res, next) => {
     const page = Number(req.query.page);
 
     const trendingFetchers = {
-      movie: async () => ({
-        data: await tmdb.getMovieTrending({ page, language, timeWindow }),
+      movie: {
+        fetch: (p: number) =>
+          tmdb.getMovieTrending({ page: p, language, timeWindow }),
         mapper: mapMovieResult,
         type: MediaType.MOVIE,
-      }),
-      tv: async () => ({
-        data: await tmdb.getTvTrending({ page, language, timeWindow }),
+      },
+      tv: {
+        fetch: (p: number) =>
+          tmdb.getTvTrending({ page: p, language, timeWindow }),
         mapper: mapTvResult,
         type: MediaType.TV,
-      }),
-      all: async () => ({
-        data: await tmdb.getAllTrending({ page, language, timeWindow }),
+      },
+      all: {
+        fetch: (p: number) =>
+          tmdb.getAllTrending({ page: p, language, timeWindow }),
         mapper: (result: any, media?: Media) => {
           if (isMovie(result)) {
             return mapMovieResult(result, media);
@@ -785,13 +789,33 @@ discoverRoutes.get('/trending', async (req, res, next) => {
           }
         },
         type: null,
-      }),
+      },
     } as const;
 
-    const { data, mapper, type } = await trendingFetchers[mediaType]();
+    const { fetch: fetchPage, mapper, type } = trendingFetchers[mediaType];
 
     const limits = getUserContentRatingLimits(req.user);
-    const results = await filterMixedResults(data.results, limits);
+    let pageOut: number;
+    let totalPages: number;
+    let totalResults: number;
+    let results;
+    if (limits) {
+      // Trending has no TMDB-side certification filter; coalesce pages
+      // so filtering doesn't leave them sparse.
+      const coalesced = await coalescePages(page || 1, fetchPage, (r) =>
+        filterMixedResults(r, limits)
+      );
+      pageOut = coalesced.page;
+      totalPages = coalesced.totalPages;
+      totalResults = coalesced.totalResults;
+      results = coalesced.results;
+    } else {
+      const data = await fetchPage(page);
+      pageOut = data.page;
+      totalPages = data.total_pages;
+      totalResults = data.total_results;
+      results = data.results;
+    }
 
     const media = await Media.getRelatedMedia(
       req.user,
@@ -802,9 +826,9 @@ discoverRoutes.get('/trending', async (req, res, next) => {
     );
 
     return res.status(200).json({
-      page: data.page,
-      totalPages: data.total_pages,
-      totalResults: data.total_results,
+      page: pageOut,
+      totalPages,
+      totalResults,
       results: results.map((result) => {
         // - If "type" is set (case: "movie" or "tv"), the mediaType must also match.
         // - If "type" is not set (case: "all"), only filter by tmdbId.

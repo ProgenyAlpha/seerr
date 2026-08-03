@@ -146,3 +146,59 @@ export async function filterMixedResults<T extends { id: number }>(
     (item) => mediaTypeOf(item) === 'person' || allowed.has(item)
   );
 }
+
+export const COALESCE_FACTOR = 2;
+
+export interface CoalescedPage<T> {
+  page: number;
+  totalPages: number;
+  totalResults: number;
+  results: T[];
+}
+
+/**
+ * Deterministic page coalescing for routes TMDB cannot pre-filter
+ * (search, trending): client page N is always built from the same
+ * COALESCE_FACTOR upstream pages ((N-1)*k+1 .. N*k), filtered and
+ * concatenated, with totalPages scaled down to match. Stateless — no
+ * cursor to track and no overlap between client pages — while keeping
+ * filtered pages near full for rating-limited users.
+ * totalResults stays the upstream count: it is an upper bound either
+ * way once filtering removes items, and scaling it would misreport the
+ * unfiltered total the UI shows.
+ */
+export async function coalescePages<T>(
+  clientPage: number,
+  fetchPage: (page: number) => Promise<{
+    page: number;
+    total_pages: number;
+    total_results: number;
+    results: T[];
+  }>,
+  filterResults: (results: T[]) => Promise<T[]>
+): Promise<CoalescedPage<T>> {
+  const first = (clientPage - 1) * COALESCE_FACTOR + 1;
+  const firstData = await fetchPage(first);
+  const upstreamTotal = firstData.total_pages;
+
+  const restPages = [];
+  for (
+    let p = first + 1;
+    p <= clientPage * COALESCE_FACTOR && p <= upstreamTotal;
+    p++
+  ) {
+    restPages.push(p);
+  }
+  const rest = await Promise.all(restPages.map((p) => fetchPage(p)));
+
+  const combined = ([firstData, ...rest] as { results: T[] }[]).flatMap(
+    (d) => d.results
+  );
+
+  return {
+    page: clientPage,
+    totalPages: Math.ceil(upstreamTotal / COALESCE_FACTOR),
+    totalResults: firstData.total_results,
+    results: await filterResults(combined),
+  };
+}
