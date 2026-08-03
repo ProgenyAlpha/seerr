@@ -4287,6 +4287,8 @@ paths:
       description: |
         Update users with given IDs with provided values in request `body.settings`. You cannot update users' Plex tokens through this request.
 
+        Parental control fields (`maxMovieRating`, `maxTvRating`, `blockUnrated`) are only written for the users where they are explicitly provided, and are skipped for the primary administrator and users with the `MANAGE_USERS` permission.
+
         Requires the `MANAGE_USERS` permission.
       tags:
         - users
@@ -4303,6 +4305,20 @@ paths:
                     type: integer
                 permissions:
                   type: integer
+                maxMovieRating:
+                  type: string
+                  nullable: true
+                  example: 'PG-13'
+                  description: Maximum allowed MPAA movie rating (G, PG, PG-13, R, NC-17)
+                maxTvRating:
+                  type: string
+                  nullable: true
+                  example: 'TV-14'
+                  description: Maximum allowed TV rating (TV-Y, TV-Y7, TV-G, TV-PG, TV-14, TV-MA)
+                blockUnrated:
+                  type: boolean
+                  default: false
+                  description: Block content with no rating (NR, Unrated)
       responses:
         '200':
           description: Successfully updated user details
