@@ -19,7 +19,7 @@ import { useRouter } from 'next/router';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 
-const messages = defineMessages(
+export const messages = defineMessages(
   'components.UserProfile.UserSettings.UserParentalControlsSettings',
   {
     parentalcontrols: 'Parental Controls',
