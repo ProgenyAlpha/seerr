@@ -3,10 +3,15 @@ import RottenTomatoes from '@server/api/rating/rottentomatoes';
 import TheMovieDb from '@server/api/themoviedb';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
 import type { TmdbKeyword } from '@server/api/themoviedb/interfaces';
+import { shouldFilterTv } from '@server/constants/contentRatings';
 import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { Watchlist } from '@server/entity/Watchlist';
+import {
+  getTvCertification,
+  getUserContentRatingLimits,
+} from '@server/lib/contentRating';
 import logger from '@server/logger';
 import { mapTvResult } from '@server/models/Search';
 import { mapSeasonWithEpisodes, mapTvDetails } from '@server/models/Tv';
@@ -21,6 +26,22 @@ tvRoutes.get('/:id', async (req, res, next) => {
     const tmdbTv = await tmdb.getTvShow({
       tvId: Number(req.params.id),
     });
+
+    const limits = getUserContentRatingLimits(req.user);
+    if (
+      limits &&
+      shouldFilterTv(
+        getTvCertification(tmdbTv),
+        limits.maxTvRating,
+        limits.blockUnrated
+      )
+    ) {
+      return res.status(403).json({
+        status: 403,
+        message: 'Content restricted by parental controls.',
+      });
+    }
+
     const metadataProvider = tmdbTv.keywords.results.some(
       (keyword: TmdbKeyword) => keyword.id === ANIME_KEYWORD_ID
     )
@@ -72,6 +93,22 @@ tvRoutes.get('/:id/season/:seasonNumber', async (req, res, next) => {
     const tmdbTv = await tmdb.getTvShow({
       tvId: Number(req.params.id),
     });
+
+    const limits = getUserContentRatingLimits(req.user);
+    if (
+      limits &&
+      shouldFilterTv(
+        getTvCertification(tmdbTv),
+        limits.maxTvRating,
+        limits.blockUnrated
+      )
+    ) {
+      return res.status(403).json({
+        status: 403,
+        message: 'Content restricted by parental controls.',
+      });
+    }
+
     const metadataProvider = tmdbTv.keywords.results.some(
       (keyword: TmdbKeyword) => keyword.id === ANIME_KEYWORD_ID
     )
@@ -195,6 +232,21 @@ tvRoutes.get('/:id/ratings', async (req, res, next) => {
     const tv = await tmdb.getTvShow({
       tvId: Number(req.params.id),
     });
+
+    const limits = getUserContentRatingLimits(req.user);
+    if (
+      limits &&
+      shouldFilterTv(
+        getTvCertification(tv),
+        limits.maxTvRating,
+        limits.blockUnrated
+      )
+    ) {
+      return res.status(403).json({
+        status: 403,
+        message: 'Content restricted by parental controls.',
+      });
+    }
 
     const rtratings = await rtapi.getTVRatings(
       tv.name,
