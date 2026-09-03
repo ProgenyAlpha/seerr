@@ -1,5 +1,6 @@
 import JellyfinAPI from '@server/api/jellyfin';
 import PlexTvAPI from '@server/api/plextv';
+import { validateContentRatingLimits } from '@server/constants/contentRatings';
 import { ApiErrorCode } from '@server/constants/error';
 import { MediaServerType } from '@server/constants/server';
 import { UserType } from '@server/constants/user';
@@ -9,6 +10,7 @@ import { UserSettings } from '@server/entity/UserSettings';
 import type {
   UserSettingsGeneralResponse,
   UserSettingsNotificationsResponse,
+  UserSettingsParentalControlsResponse,
 } from '@server/interfaces/api/userSettingsInterfaces';
 import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
@@ -772,6 +774,90 @@ userSettingsRoutes.post<
       await userRepository.save(user);
 
       return res.status(200).json({ permissions: user.permissions });
+    } catch (e) {
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
+userSettingsRoutes.get<{ id: string }, UserSettingsParentalControlsResponse>(
+  '/parental-controls',
+  isAuthenticated(Permission.MANAGE_USERS),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+
+    try {
+      const user = await userRepository.findOne({
+        where: { id: Number(req.params.id) },
+      });
+
+      if (!user) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      return res.status(200).json({
+        maxMovieRating: user.settings?.maxMovieRating ?? undefined,
+        maxTvRating: user.settings?.maxTvRating ?? undefined,
+        blockUnrated: user.settings?.blockUnrated ?? false,
+      });
+    } catch (e) {
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
+userSettingsRoutes.post<
+  { id: string },
+  UserSettingsParentalControlsResponse,
+  UserSettingsParentalControlsResponse
+>(
+  '/parental-controls',
+  isAuthenticated(Permission.MANAGE_USERS),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+
+    try {
+      const user = await userRepository.findOne({
+        where: { id: Number(req.params.id) },
+      });
+
+      if (!user) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      if (user.id === 1) {
+        return next({
+          status: 403,
+          message:
+            'Cannot set parental controls for the primary administrator.',
+        });
+      }
+
+      if (user.hasPermission(Permission.MANAGE_USERS)) {
+        return next({
+          status: 403,
+          message:
+            'Cannot set parental controls for users with admin permissions.',
+        });
+      }
+
+      const validationError = validateContentRatingLimits(req.body);
+      if (validationError) {
+        return next({ status: 400, message: validationError });
+      }
+
+      user.settings ??= new UserSettings({ user });
+      user.settings.maxMovieRating = req.body.maxMovieRating || null;
+      user.settings.maxTvRating = req.body.maxTvRating || null;
+      user.settings.blockUnrated = req.body.blockUnrated ?? false;
+
+      await userRepository.save(user);
+
+      return res.status(200).json({
+        maxMovieRating: user.settings.maxMovieRating ?? undefined,
+        maxTvRating: user.settings.maxTvRating ?? undefined,
+        blockUnrated: user.settings.blockUnrated ?? false,
+      });
     } catch (e) {
       next({ status: 500, message: e.message });
     }

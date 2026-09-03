@@ -76,3 +76,24 @@ export function getAllowedRatings(
 
   return ratings.slice(0, maxIndex + 1);
 }
+
+export function validateContentRatingLimits(
+  body: UserContentRatingLimits
+): string | null {
+  if (
+    body.maxMovieRating &&
+    !MOVIE_RATINGS.includes(body.maxMovieRating as MovieRating)
+  ) {
+    return `Invalid movie rating: ${body.maxMovieRating}`;
+  }
+  if (body.maxTvRating && !TV_RATINGS.includes(body.maxTvRating as TvRating)) {
+    return `Invalid TV rating: ${body.maxTvRating}`;
+  }
+  if (
+    body.blockUnrated !== undefined &&
+    typeof body.blockUnrated !== 'boolean'
+  ) {
+    return 'blockUnrated must be a boolean.';
+  }
+  return null;
+}
