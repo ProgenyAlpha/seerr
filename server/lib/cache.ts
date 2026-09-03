@@ -3,6 +3,7 @@ import { LRUCache } from 'lru-cache';
 export type AvailableCacheIds =
   | 'tmdb'
   | 'tmdbscan'
+  | 'tmdbratings'
   | 'radarr'
   | 'sonarr'
   | 'rt'
@@ -23,6 +24,8 @@ const TMDB_MAX_KEYS = 1000;
 
 // Backstop against unbounded growth as the 15 minute TTL is what bounds this tier.
 const TMDB_SCAN_MAX_KEYS = 2000;
+
+const TMDB_RATINGS_MAX_KEYS = 5000;
 
 // Only the rolling quality profile, root folder and language profile lookups reach
 // these tiers, and keys are prefixed by server url, so this is a few keys per server.
@@ -224,6 +227,10 @@ class CacheManager {
     tmdbscan: new Cache('tmdbscan', 'The Movie Database API (Library Scans)', {
       stdTtl: 900,
       max: TMDB_SCAN_MAX_KEYS,
+    }),
+    tmdbratings: new Cache('tmdbratings', 'The Movie Database API (Ratings)', {
+      stdTtl: 604800,
+      max: TMDB_RATINGS_MAX_KEYS,
     }),
     radarr: new Cache('radarr', 'Radarr API', { max: RADARR_MAX_KEYS }),
     sonarr: new Cache('sonarr', 'Sonarr API', { max: SONARR_MAX_KEYS }),

@@ -7,7 +7,11 @@ import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { Watchlist } from '@server/entity/Watchlist';
-import { isTvRestricted } from '@server/lib/contentRating';
+import {
+  filterTvByRating,
+  getUserContentRatingLimits,
+  isTvRestricted,
+} from '@server/lib/contentRating';
 import logger from '@server/logger';
 import { mapTvResult } from '@server/models/Search';
 import { mapSeasonWithEpisodes, mapTvDetails } from '@server/models/Tv';
@@ -126,9 +130,12 @@ tvRoutes.get('/:id/recommendations', async (req, res, next) => {
       language: (req.query.language as string) ?? req.locale,
     });
 
+    const limits = getUserContentRatingLimits(req.user);
+    const filteredResults = await filterTvByRating(results.results, limits);
+
     const media = await Media.getRelatedMedia(
       req.user,
-      results.results.map((result) => ({
+      filteredResults.map((result) => ({
         tmdbId: result.id,
         mediaType: MediaType.TV,
       })),
@@ -139,7 +146,7 @@ tvRoutes.get('/:id/recommendations', async (req, res, next) => {
       page: results.page,
       totalPages: results.total_pages,
       totalResults: results.total_results,
-      results: results.results.map((result) =>
+      results: filteredResults.map((result) =>
         mapTvResult(
           result,
           media.find(
@@ -171,9 +178,12 @@ tvRoutes.get('/:id/similar', async (req, res, next) => {
       language: (req.query.language as string) ?? req.locale,
     });
 
+    const limits = getUserContentRatingLimits(req.user);
+    const filteredResults = await filterTvByRating(results.results, limits);
+
     const media = await Media.getRelatedMedia(
       req.user,
-      results.results.map((result) => ({
+      filteredResults.map((result) => ({
         tmdbId: result.id,
         mediaType: MediaType.TV,
       })),
@@ -184,7 +194,7 @@ tvRoutes.get('/:id/similar', async (req, res, next) => {
       page: results.page,
       totalPages: results.total_pages,
       totalResults: results.total_results,
-      results: results.results.map((result) =>
+      results: filteredResults.map((result) =>
         mapTvResult(
           result,
           media.find(

@@ -19,6 +19,7 @@ import type {
   TmdbKeywordSearchResponse,
   TmdbLanguage,
   TmdbMovieDetails,
+  TmdbMovieReleaseResult,
   TmdbNetwork,
   TmdbPersonCombinedCredits,
   TmdbPersonDetails,
@@ -29,6 +30,7 @@ import type {
   TmdbSearchTvResponse,
   TmdbSeasonWithEpisodes,
   TmdbTvDetails,
+  TmdbTvRatingResult,
   TmdbTvScanDetails,
   TmdbUpcomingMoviesResponse,
   TmdbWatchProviderDetails,
@@ -180,6 +182,7 @@ const stripUnreadTvCredits = <T>(data: T): T => {
 
 class TheMovieDb extends ExternalAPI implements TvShowProvider {
   private scanCache = cacheManager.getCache('tmdbscan').data;
+  private ratingsCache = cacheManager.getCache('tmdbratings').data;
   private locale: string;
   private discoverRegion?: string;
   private originalLanguage?: string;
@@ -1333,6 +1336,60 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
         });
       }
     };
+
+  public getMovieReleaseDates = async ({
+    movieId,
+  }: {
+    movieId: number;
+  }): Promise<TmdbMovieReleaseResult> => {
+    try {
+      return await this.get<TmdbMovieReleaseResult>(
+        `/movie/${movieId}/release_dates`,
+        {},
+        604800,
+        {
+          cache: this.ratingsCache,
+          transform: (data) => ({
+            results: data.results.filter(
+              (r) => r.iso_3166_1 === RATING_COUNTRY
+            ),
+          }),
+        }
+      );
+    } catch (e) {
+      throw new Error(
+        `[TMDB] Failed to fetch movie release dates: ${e.message}`,
+        { cause: e }
+      );
+    }
+  };
+
+  public getTvContentRatings = async ({
+    tvId,
+  }: {
+    tvId: number;
+  }): Promise<TmdbTvRatingResult> => {
+    try {
+      return await this.get<TmdbTvRatingResult>(
+        `/tv/${tvId}/content_ratings`,
+        {},
+        604800,
+        {
+          cache: this.ratingsCache,
+          transform: (data) => ({
+            results: data.results.filter(
+              (r) => r.iso_3166_1 === RATING_COUNTRY
+            ),
+          }),
+        }
+      );
+    } catch (e) {
+      throw new Error(
+        `[TMDB] Failed to fetch TV content ratings: ${e.message}`,
+        { cause: e }
+      );
+    }
+  };
 
   public getTvCertifications = async (): Promise<TmdbCertificationResponse> => {
     try {

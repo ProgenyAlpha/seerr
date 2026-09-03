@@ -11,9 +11,15 @@ import { User } from '@server/entity/User';
 import { Watchlist } from '@server/entity/Watchlist';
 import type {
   GenreSliderItem,
+  WatchlistItem,
   WatchlistResponse,
 } from '@server/interfaces/api/discoverInterfaces';
-import { getUserContentRatingLimits } from '@server/lib/contentRating';
+import {
+  filterMixedResults,
+  filterMoviesByRating,
+  filterTvByRating,
+  getUserContentRatingLimits,
+} from '@server/lib/contentRating';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { mapProductionCompany } from '@server/models/Movie';
@@ -141,9 +147,12 @@ discoverRoutes.get('/movies', async (req, res, next) => {
       certificationCountry: query.certificationCountry,
     });
 
+    const limits = getUserContentRatingLimits(req.user);
+    const results = await filterMoviesByRating(data.results, limits);
+
     const media = await Media.getRelatedMedia(
       req.user,
-      data.results.map((result) => ({
+      results.map((result) => ({
         tmdbId: result.id,
         mediaType: MediaType.MOVIE,
       })),
@@ -170,7 +179,7 @@ discoverRoutes.get('/movies', async (req, res, next) => {
       totalPages: data.total_pages,
       totalResults: data.total_results,
       keywords: keywordData,
-      results: data.results.map((result) =>
+      results: results.map((result) =>
         mapMovieResult(
           result,
           media.find(
@@ -214,9 +223,12 @@ discoverRoutes.get<{ language: string }>(
         originalLanguage: req.params.language,
       });
 
+      const limits = getUserContentRatingLimits(req.user);
+      const results = await filterMoviesByRating(data.results, limits);
+
       const media = await Media.getRelatedMedia(
         req.user,
-        data.results.map((result) => ({
+        results.map((result) => ({
           tmdbId: result.id,
           mediaType: MediaType.MOVIE,
         })),
@@ -228,7 +240,7 @@ discoverRoutes.get<{ language: string }>(
         totalPages: data.total_pages,
         totalResults: data.total_results,
         language,
-        results: data.results.map((result) =>
+        results: results.map((result) =>
           mapMovieResult(
             result,
             media.find(
@@ -276,9 +288,12 @@ discoverRoutes.get<{ genreId: string }>(
         genre: req.params.genreId as string,
       });
 
+      const limits = getUserContentRatingLimits(req.user);
+      const results = await filterMoviesByRating(data.results, limits);
+
       const media = await Media.getRelatedMedia(
         req.user,
-        data.results.map((result) => ({
+        results.map((result) => ({
           tmdbId: result.id,
           mediaType: MediaType.MOVIE,
         })),
@@ -290,7 +305,7 @@ discoverRoutes.get<{ genreId: string }>(
         totalPages: data.total_pages,
         totalResults: data.total_results,
         genre,
-        results: data.results.map((result) =>
+        results: results.map((result) =>
           mapMovieResult(
             result,
             media.find(
@@ -330,9 +345,12 @@ discoverRoutes.get<{ studioId: string }>(
         studio: req.params.studioId as string,
       });
 
+      const limits = getUserContentRatingLimits(req.user);
+      const results = await filterMoviesByRating(data.results, limits);
+
       const media = await Media.getRelatedMedia(
         req.user,
-        data.results.map((result) => ({
+        results.map((result) => ({
           tmdbId: result.id,
           mediaType: MediaType.MOVIE,
         })),
@@ -344,7 +362,7 @@ discoverRoutes.get<{ studioId: string }>(
         totalPages: data.total_pages,
         totalResults: data.total_results,
         studio: mapProductionCompany(studio),
-        results: data.results.map((result) =>
+        results: results.map((result) =>
           mapMovieResult(
             result,
             media.find(
@@ -384,9 +402,12 @@ discoverRoutes.get('/movies/upcoming', async (req, res, next) => {
       primaryReleaseDateGte: date,
     });
 
+    const limits = getUserContentRatingLimits(req.user);
+    const results = await filterMoviesByRating(data.results, limits);
+
     const media = await Media.getRelatedMedia(
       req.user,
-      data.results.map((result) => ({
+      results.map((result) => ({
         tmdbId: result.id,
         mediaType: MediaType.MOVIE,
       })),
@@ -397,7 +418,7 @@ discoverRoutes.get('/movies/upcoming', async (req, res, next) => {
       page: data.page,
       totalPages: data.total_pages,
       totalResults: data.total_results,
-      results: data.results.map((result) =>
+      results: results.map((result) =>
         mapMovieResult(
           result,
           media.find(
@@ -456,9 +477,12 @@ discoverRoutes.get('/tv', async (req, res, next) => {
       certificationCountry: query.certificationCountry,
     });
 
+    const limits = getUserContentRatingLimits(req.user);
+    const results = await filterTvByRating(data.results, limits);
+
     const media = await Media.getRelatedMedia(
       req.user,
-      data.results.map((result) => ({
+      results.map((result) => ({
         tmdbId: result.id,
         mediaType: MediaType.TV,
       })),
@@ -485,7 +509,7 @@ discoverRoutes.get('/tv', async (req, res, next) => {
       totalPages: data.total_pages,
       totalResults: data.total_results,
       keywords: keywordData,
-      results: data.results.map((result) =>
+      results: results.map((result) =>
         mapTvResult(
           result,
           media.find(
@@ -528,9 +552,12 @@ discoverRoutes.get<{ language: string }>(
         originalLanguage: req.params.language,
       });
 
+      const limits = getUserContentRatingLimits(req.user);
+      const results = await filterTvByRating(data.results, limits);
+
       const media = await Media.getRelatedMedia(
         req.user,
-        data.results.map((result) => ({
+        results.map((result) => ({
           tmdbId: result.id,
           mediaType: MediaType.TV,
         })),
@@ -542,7 +569,7 @@ discoverRoutes.get<{ language: string }>(
         totalPages: data.total_pages,
         totalResults: data.total_results,
         language,
-        results: data.results.map((result) =>
+        results: results.map((result) =>
           mapTvResult(
             result,
             media.find(
@@ -590,9 +617,12 @@ discoverRoutes.get<{ genreId: string }>(
         genre: req.params.genreId,
       });
 
+      const limits = getUserContentRatingLimits(req.user);
+      const results = await filterTvByRating(data.results, limits);
+
       const media = await Media.getRelatedMedia(
         req.user,
-        data.results.map((result) => ({
+        results.map((result) => ({
           tmdbId: result.id,
           mediaType: MediaType.TV,
         })),
@@ -604,7 +634,7 @@ discoverRoutes.get<{ genreId: string }>(
         totalPages: data.total_pages,
         totalResults: data.total_results,
         genre,
-        results: data.results.map((result) =>
+        results: results.map((result) =>
           mapTvResult(
             result,
             media.find(
@@ -644,9 +674,12 @@ discoverRoutes.get<{ networkId: string }>(
         network: Number(req.params.networkId),
       });
 
+      const limits = getUserContentRatingLimits(req.user);
+      const results = await filterTvByRating(data.results, limits);
+
       const media = await Media.getRelatedMedia(
         req.user,
-        data.results.map((result) => ({
+        results.map((result) => ({
           tmdbId: result.id,
           mediaType: MediaType.TV,
         })),
@@ -658,7 +691,7 @@ discoverRoutes.get<{ networkId: string }>(
         totalPages: data.total_pages,
         totalResults: data.total_results,
         network: mapNetwork(network),
-        results: data.results.map((result) =>
+        results: results.map((result) =>
           mapTvResult(
             result,
             media.find(
@@ -698,9 +731,12 @@ discoverRoutes.get('/tv/upcoming', async (req, res, next) => {
       firstAirDateGte: date,
     });
 
+    const limits = getUserContentRatingLimits(req.user);
+    const results = await filterTvByRating(data.results, limits);
+
     const media = await Media.getRelatedMedia(
       req.user,
-      data.results.map((result) => ({
+      results.map((result) => ({
         tmdbId: result.id,
         mediaType: MediaType.TV,
       })),
@@ -711,7 +747,7 @@ discoverRoutes.get('/tv/upcoming', async (req, res, next) => {
       page: data.page,
       totalPages: data.total_pages,
       totalResults: data.total_results,
-      results: data.results.map((result) =>
+      results: results.map((result) =>
         mapTvResult(
           result,
           media.find(
@@ -820,9 +856,12 @@ discoverRoutes.get<{ keywordId: string }>(
         language: (req.query.language as string) ?? req.locale,
       });
 
+      const limits = getUserContentRatingLimits(req.user);
+      const results = await filterMoviesByRating(data.results, limits);
+
       const media = await Media.getRelatedMedia(
         req.user,
-        data.results.map((result) => ({
+        results.map((result) => ({
           tmdbId: result.id,
           mediaType: MediaType.MOVIE,
         })),
@@ -833,7 +872,7 @@ discoverRoutes.get<{ keywordId: string }>(
         page: data.page,
         totalPages: data.total_pages,
         totalResults: data.total_results,
-        results: data.results.map((result) =>
+        results: results.map((result) =>
           mapMovieResult(
             result,
             media.find(
@@ -970,11 +1009,17 @@ discoverRoutes.get<Record<string, unknown>, WatchlistResponse>(
         skip: offset,
       });
       if (total) {
+        const allowed = await filterMixedResults(
+          result.map((w) => ({ id: w.tmdbId, mediaType: w.mediaType, w })),
+          getUserContentRatingLimits(req.user)
+        );
+        const results = allowed.map((a) => a.w);
+
         return res.json({
           page: page,
           totalPages: Math.ceil(total / itemsPerPage),
           totalResults: total,
-          results: result,
+          results,
         });
       }
     }
@@ -993,17 +1038,23 @@ discoverRoutes.get<Record<string, unknown>, WatchlistResponse>(
 
     const watchlist = await plexTV.getWatchlist({ offset });
 
-    return res.json({
-      page,
-      totalPages: Math.ceil(watchlist.totalSize / itemsPerPage),
-      totalResults: watchlist.totalSize,
-      results: watchlist.items.map((item) => ({
+    const limits = getUserContentRatingLimits(req.user);
+    const results = await filterMixedResults<WatchlistItem>(
+      watchlist.items.map((item) => ({
         id: item.tmdbId,
         ratingKey: item.ratingKey,
         title: item.title,
         mediaType: item.type === 'show' ? 'tv' : 'movie',
         tmdbId: item.tmdbId,
       })),
+      limits
+    );
+
+    return res.json({
+      page,
+      totalPages: Math.ceil(watchlist.totalSize / itemsPerPage),
+      totalResults: watchlist.totalSize,
+      results,
     });
   }
 );
