@@ -89,3 +89,11 @@ export function getAllowedRatings(
 
   return ratings.slice(0, maxIndex + 1);
 }
+
+export function getMovieRatingOptions(): { value: string; label: string }[] {
+  return MOVIE_RATINGS.map((rating) => ({ value: rating, label: rating }));
+}
+
+export function getTvRatingOptions(): { value: string; label: string }[] {
+  return TV_RATINGS.map((rating) => ({ value: rating, label: rating }));
+}
