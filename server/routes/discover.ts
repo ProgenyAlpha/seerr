@@ -13,6 +13,7 @@ import type {
   GenreSliderItem,
   WatchlistResponse,
 } from '@server/interfaces/api/discoverInterfaces';
+import { getUserContentRatingLimits } from '@server/lib/contentRating';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { mapProductionCompany } from '@server/models/Movie';
@@ -48,6 +49,7 @@ export const createTmdbWithRegionLanguage = (user?: User): TheMovieDb => {
   return new TheMovieDb({
     discoverRegion,
     originalLanguage,
+    contentRatingLimits: getUserContentRatingLimits(user),
   });
 };
 
@@ -312,7 +314,9 @@ discoverRoutes.get<{ genreId: string }>(
 discoverRoutes.get<{ studioId: string }>(
   '/movies/studio/:studioId',
   async (req, res, next) => {
-    const tmdb = new TheMovieDb();
+    const tmdb = new TheMovieDb({
+      contentRatingLimits: getUserContentRatingLimits(req.user),
+    });
 
     try {
       const studio = await tmdb.getStudio(Number(req.params.studioId));
@@ -619,7 +623,9 @@ discoverRoutes.get<{ genreId: string }>(
 discoverRoutes.get<{ networkId: string }>(
   '/tv/network/:networkId',
   async (req, res, next) => {
-    const tmdb = new TheMovieDb();
+    const tmdb = new TheMovieDb({
+      contentRatingLimits: getUserContentRatingLimits(req.user),
+    });
 
     try {
       const network = await tmdb.getNetwork(Number(req.params.networkId));
