@@ -1,6 +1,11 @@
 import TheMovieDb from '@server/api/themoviedb';
 import type { TmdbSearchMultiResponse } from '@server/api/themoviedb/interfaces';
 import Media from '@server/entity/Media';
+import {
+  coalescePages,
+  filterMixedResults,
+  getUserContentRatingLimits,
+} from '@server/lib/contentRating';
 import { findSearchProvider } from '@server/lib/search';
 import logger from '@server/logger';
 import { mapSearchResults } from '@server/models/Search';
@@ -11,6 +16,7 @@ const searchRoutes = Router();
 searchRoutes.get('/', async (req, res, next) => {
   const queryString = req.query.query as string;
   const searchProvider = findSearchProvider(queryString.toLowerCase());
+  const limits = getUserContentRatingLimits(req.user);
   let results: TmdbSearchMultiResponse;
 
   try {
@@ -23,14 +29,21 @@ searchRoutes.get('/', async (req, res, next) => {
         language: (req.query.language as string) ?? req.locale,
         query: queryString,
       });
+      results.results = await filterMixedResults(results.results, limits);
     } else {
       const tmdb = new TheMovieDb();
+      const searchPage = (page: number) =>
+        tmdb.searchMulti({
+          query: queryString,
+          page,
+          language: (req.query.language as string) ?? req.locale,
+        });
 
-      results = await tmdb.searchMulti({
-        query: queryString,
-        page: Number(req.query.page),
-        language: (req.query.language as string) ?? req.locale,
-      });
+      results = limits
+        ? await coalescePages(Number(req.query.page) || 1, searchPage, (r) =>
+            filterMixedResults(r, limits)
+          )
+        : await searchPage(Number(req.query.page));
     }
 
     const media = await Media.getRelatedMedia(

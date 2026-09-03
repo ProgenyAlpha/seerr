@@ -175,3 +175,37 @@ export async function filterMixedResults<T extends { id: number }>(
     (item) => mediaTypeOf(item) === 'person' || allowed.has(item)
   );
 }
+
+export const COALESCE_FACTOR = 2;
+
+interface TmdbPage<T> {
+  page: number;
+  total_pages: number;
+  total_results: number;
+  results: T[];
+}
+
+// Search and trending have no TMDB certification filter, so filtered pages
+// come up short. Page N is built from upstream pages (N-1)*k+1 to N*k.
+// total_results is left as TMDB reports it.
+export async function coalescePages<T>(
+  clientPage: number,
+  fetchPage: (page: number) => Promise<TmdbPage<T>>,
+  filterResults: (results: T[]) => Promise<T[]>
+): Promise<TmdbPage<T>> {
+  const first = (clientPage - 1) * COALESCE_FACTOR + 1;
+  const firstData = await fetchPage(first);
+  const last = Math.min(clientPage * COALESCE_FACTOR, firstData.total_pages);
+  const rest = await Promise.all(
+    Array.from({ length: last - first }, (_, i) => fetchPage(first + 1 + i))
+  );
+
+  return {
+    page: clientPage,
+    total_pages: Math.ceil(firstData.total_pages / COALESCE_FACTOR),
+    total_results: firstData.total_results,
+    results: await filterResults(
+      [firstData, ...rest].flatMap((d) => d.results)
+    ),
+  };
+}

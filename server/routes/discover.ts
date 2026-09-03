@@ -15,6 +15,7 @@ import type {
   WatchlistResponse,
 } from '@server/interfaces/api/discoverInterfaces';
 import {
+  coalescePages,
   filterMixedResults,
   filterMoviesByRating,
   filterTvByRating,
@@ -779,18 +780,21 @@ discoverRoutes.get('/trending', async (req, res, next) => {
     const page = Number(req.query.page);
 
     const trendingFetchers = {
-      movie: async () => ({
-        data: await tmdb.getMovieTrending({ page, language, timeWindow }),
+      movie: {
+        fetch: (p: number) =>
+          tmdb.getMovieTrending({ page: p, language, timeWindow }),
         mapper: mapMovieResult,
         type: MediaType.MOVIE,
-      }),
-      tv: async () => ({
-        data: await tmdb.getTvTrending({ page, language, timeWindow }),
+      },
+      tv: {
+        fetch: (p: number) =>
+          tmdb.getTvTrending({ page: p, language, timeWindow }),
         mapper: mapTvResult,
         type: MediaType.TV,
-      }),
-      all: async () => ({
-        data: await tmdb.getAllTrending({ page, language, timeWindow }),
+      },
+      all: {
+        fetch: (p: number) =>
+          tmdb.getAllTrending({ page: p, language, timeWindow }),
         mapper: (result: any, media?: Media) => {
           if (isMovie(result)) {
             return mapMovieResult(result, media);
@@ -803,10 +807,17 @@ discoverRoutes.get('/trending', async (req, res, next) => {
           }
         },
         type: null,
-      }),
+      },
     } as const;
 
-    const { data, mapper, type } = await trendingFetchers[mediaType]();
+    const { fetch: fetchPage, mapper, type } = trendingFetchers[mediaType];
+
+    const limits = getUserContentRatingLimits(req.user);
+    const data = limits
+      ? await coalescePages(page || 1, fetchPage, (r) =>
+          filterMixedResults(r, limits)
+        )
+      : await fetchPage(page);
 
     const media = await Media.getRelatedMedia(
       req.user,
