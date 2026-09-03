@@ -149,3 +149,52 @@ export async function filterMixedResults<T extends { id: number }>(
     (item) => mediaTypeOf(item) === 'person' || allowed.has(item)
   );
 }
+
+export const COALESCE_FACTOR = 2;
+
+export interface CoalescedPage<T> {
+  page: number;
+  totalPages: number;
+  totalResults: number;
+  results: T[];
+}
+
+// Search and trending have no TMDB-side certification filter, so filtering
+// leaves pages sparse. Client page N is built from a fixed window of upstream
+// pages ((N-1)*k+1 .. N*k), which keeps pages full with no cursor to track and
+// no overlap. totalResults stays as TMDB reported it, an upper bound either way.
+export async function coalescePages<T>(
+  clientPage: number,
+  fetchPage: (page: number) => Promise<{
+    page: number;
+    total_pages: number;
+    total_results: number;
+    results: T[];
+  }>,
+  filterResults: (results: T[]) => Promise<T[]>
+): Promise<CoalescedPage<T>> {
+  const first = (clientPage - 1) * COALESCE_FACTOR + 1;
+  const firstData = await fetchPage(first);
+  const upstreamTotal = firstData.total_pages;
+
+  const restPages = [];
+  for (
+    let p = first + 1;
+    p <= clientPage * COALESCE_FACTOR && p <= upstreamTotal;
+    p++
+  ) {
+    restPages.push(p);
+  }
+  const rest = await Promise.all(restPages.map((p) => fetchPage(p)));
+
+  const combined = ([firstData, ...rest] as { results: T[] }[]).flatMap(
+    (d) => d.results
+  );
+
+  return {
+    page: clientPage,
+    totalPages: Math.ceil(upstreamTotal / COALESCE_FACTOR),
+    totalResults: firstData.total_results,
+    results: await filterResults(combined),
+  };
+}
