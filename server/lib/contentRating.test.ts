@@ -1,5 +1,6 @@
 import ExternalAPI from '@server/api/externalapi';
 import {
+  coalescePages,
   filterMixedResults,
   filterMoviesByRating,
   filterTvByRating,
@@ -268,5 +269,48 @@ describe('filterMixedResults', () => {
       { maxTvRating: 'TV-14' }
     );
     assert.deepEqual(result, [{ id: 1, mediaType: 'movie' }]);
+  });
+});
+
+describe('coalescePages', () => {
+  const upstream = (totalPages: number) => (page: number) =>
+    Promise.resolve({
+      page,
+      total_pages: totalPages,
+      total_results: totalPages * 20,
+      results: Array.from({ length: 20 }, (_, i) => (page - 1) * 20 + i),
+    });
+  const noFilter = (r: number[]) => Promise.resolve(r);
+
+  it('combines a fixed window of upstream pages per client page', async () => {
+    const pageOne = await coalescePages(1, upstream(10), noFilter);
+    assert.equal(pageOne.results.length, 40);
+    assert.equal(pageOne.results[0], 0);
+    assert.equal(pageOne.results[39], 39);
+    assert.equal(pageOne.totalPages, 5);
+
+    const pageTwo = await coalescePages(2, upstream(10), noFilter);
+    assert.equal(pageTwo.results[0], 40);
+    assert.equal(pageTwo.results[39], 79);
+  });
+
+  it('does not overlap between consecutive client pages', async () => {
+    const a = await coalescePages(1, upstream(10), noFilter);
+    const b = await coalescePages(2, upstream(10), noFilter);
+    const seen = new Set(a.results);
+    assert.equal(b.results.some((r) => seen.has(r)), false);
+  });
+
+  it('stops at the upstream last page instead of over-fetching', async () => {
+    const last = await coalescePages(2, upstream(3), noFilter);
+    assert.equal(last.results.length, 20);
+    assert.equal(last.totalPages, 2);
+  });
+
+  it('applies the filter to the combined window', async () => {
+    const evens = (r: number[]) => Promise.resolve(r.filter((n) => n % 2 === 0));
+    const page = await coalescePages(1, upstream(10), evens);
+    assert.equal(page.results.length, 20);
+    assert.equal(page.results.every((n) => n % 2 === 0), true);
   });
 });
