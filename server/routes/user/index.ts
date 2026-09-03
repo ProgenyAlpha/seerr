@@ -1,6 +1,10 @@
 import JellyfinAPI from '@server/api/jellyfin';
 import PlexTvAPI from '@server/api/plextv';
 import TautulliAPI from '@server/api/tautulli';
+import {
+  validateContentRatingLimits,
+  type UserContentRatingLimits,
+} from '@server/constants/contentRatings';
 import { MediaType } from '@server/constants/media';
 import { MediaServerType } from '@server/constants/server';
 import { UserType } from '@server/constants/user';
@@ -9,6 +13,7 @@ import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
 import { User } from '@server/entity/User';
 import { UserPushSubscription } from '@server/entity/UserPushSubscription';
+import { UserSettings } from '@server/entity/UserSettings';
 import { Watchlist } from '@server/entity/Watchlist';
 import type { WatchlistResponse } from '@server/interfaces/api/discoverInterfaces';
 import type {
@@ -511,7 +516,7 @@ export const canMakePermissionsChange = (
 router.put<
   Record<string, never>,
   Partial<User>[],
-  { ids: string[]; permissions: number }
+  UserContentRatingLimits & { ids: string[]; permissions: number }
 >('/', isAuthenticated(Permission.MANAGE_USERS), async (req, res, next) => {
   try {
     const isOwner = req.user?.id === 1;
@@ -521,6 +526,11 @@ router.put<
         status: 403,
         message: 'You do not have permission to grant this level of access',
       });
+    }
+
+    const validationError = validateContentRatingLimits(req.body);
+    if (validationError) {
+      return next({ status: 400, message: validationError });
     }
 
     const userRepository = getRepository(User);
@@ -533,12 +543,33 @@ router.put<
       },
     });
 
+    const hasParentalControlFields =
+      req.body.maxMovieRating !== undefined ||
+      req.body.maxTvRating !== undefined ||
+      req.body.blockUnrated !== undefined;
+
     const updatedUsers = await Promise.all(
       users.map(async (user) => {
-        return userRepository.save(<User>{
-          ...user,
-          ...{ permissions: req.body.permissions },
-        });
+        user.permissions = req.body.permissions;
+
+        if (
+          hasParentalControlFields &&
+          user.id !== 1 &&
+          !hasPermission(Permission.MANAGE_USERS, user.permissions)
+        ) {
+          user.settings ??= new UserSettings({ user });
+          if (req.body.maxMovieRating !== undefined) {
+            user.settings.maxMovieRating = req.body.maxMovieRating || null;
+          }
+          if (req.body.maxTvRating !== undefined) {
+            user.settings.maxTvRating = req.body.maxTvRating || null;
+          }
+          if (req.body.blockUnrated !== undefined) {
+            user.settings.blockUnrated = req.body.blockUnrated;
+          }
+        }
+
+        return userRepository.save(user);
       })
     );
 

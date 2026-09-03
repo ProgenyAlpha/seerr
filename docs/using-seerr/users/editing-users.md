@@ -8,7 +8,7 @@ sidebar_position: 3
 
 From the **User List**, you can click the **Edit** button to modify a particular user's settings.
 
-You can also click the check boxes and click the **Bulk Edit** button to set user permissions for multiple users at once.
+You can also click the check boxes and click the **Bulk Edit** button to set user permissions or parental controls for multiple users at once.
 
 ## General
 
