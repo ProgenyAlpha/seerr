@@ -53,3 +53,26 @@ export const shouldFilterTv = (
   maxRating: string | undefined,
   blockUnrated = false
 ) => shouldFilter(TV_RATINGS, rating, maxRating, blockUnrated);
+
+// An unknown maxRating falls back to the lowest rating.
+export function getAllowedRatings(
+  mediaType: 'movie' | 'tv',
+  limits: UserContentRatingLimits
+): string[] | undefined {
+  const ratings: readonly string[] =
+    mediaType === 'movie' ? MOVIE_RATINGS : TV_RATINGS;
+  const maxRating =
+    mediaType === 'movie' ? limits.maxMovieRating : limits.maxTvRating;
+
+  if (!maxRating) {
+    return limits.blockUnrated ? [...ratings] : undefined;
+  }
+
+  const maxIndex = ratings.indexOf(maxRating);
+
+  if (maxIndex === -1) {
+    return [ratings[0]];
+  }
+
+  return ratings.slice(0, maxIndex + 1);
+}
