@@ -1,3 +1,4 @@
+import TheMovieDb from '@server/api/themoviedb';
 import type {
   TmdbMovieDetails,
   TmdbTvDetails,
@@ -7,6 +8,8 @@ import {
   MOVIE_RATINGS,
   TV_RATINGS,
   UNRATED_VALUES,
+  shouldFilterMovie,
+  shouldFilterTv,
   type MovieRating,
   type TvRating,
 } from '@server/constants/contentRatings';
@@ -66,5 +69,83 @@ export function getTvCertification(
         ? rating
         : worst,
     undefined
+  );
+}
+
+// Shared so the rate limiter is global rather than per-call.
+let lookupTmdb: TheMovieDb | undefined;
+
+async function filterList<T extends { id: number }>(
+  items: T[],
+  limits: UserContentRatingLimits | undefined,
+  getCert: (id: number, tmdb: TheMovieDb) => Promise<string | undefined>,
+  isBlocked: (cert: string | undefined) => boolean
+): Promise<T[]> {
+  if (!limits) return items;
+
+  const tmdb = (lookupTmdb ??= new TheMovieDb());
+  const settled = await Promise.allSettled(
+    items.map(async (item) => ({ item, cert: await getCert(item.id, tmdb) }))
+  );
+
+  // A rejected lookup fails closed: the item is dropped.
+  return settled.flatMap((outcome) =>
+    outcome.status === 'fulfilled' && !isBlocked(outcome.value.cert)
+      ? [outcome.value.item]
+      : []
+  );
+}
+
+export function filterMoviesByRating<T extends { id: number }>(
+  items: T[],
+  limits: UserContentRatingLimits | undefined
+): Promise<T[]> {
+  return filterList(
+    items,
+    limits,
+    async (id, tmdb) =>
+      getMovieCertification(await tmdb.getMovie({ movieId: id })),
+    (cert) =>
+      shouldFilterMovie(cert, limits?.maxMovieRating, limits?.blockUnrated)
+  );
+}
+
+export function filterTvByRating<T extends { id: number }>(
+  items: T[],
+  limits: UserContentRatingLimits | undefined
+): Promise<T[]> {
+  return filterList(
+    items,
+    limits,
+    async (id, tmdb) => getTvCertification(await tmdb.getTvShow({ tvId: id })),
+    (cert) => shouldFilterTv(cert, limits?.maxTvRating, limits?.blockUnrated)
+  );
+}
+
+function mediaTypeOf(item: unknown): string | undefined {
+  const record = item as { media_type?: string; mediaType?: string };
+  return record.media_type ?? record.mediaType;
+}
+
+// Splits a mixed result list (movie/tv/person, e.g. trending or search) by
+// media type. Person entries pass through untouched; anything that isn't
+// movie/tv/person is dropped rather than let an unrecognized shape through.
+export async function filterMixedResults<T extends { id: number }>(
+  items: T[],
+  limits: UserContentRatingLimits | undefined
+): Promise<T[]> {
+  if (!limits) return items;
+
+  const movies = items.filter((item) => mediaTypeOf(item) === 'movie');
+  const tv = items.filter((item) => mediaTypeOf(item) === 'tv');
+
+  const [allowedMovies, allowedTv] = await Promise.all([
+    filterMoviesByRating(movies, limits),
+    filterTvByRating(tv, limits),
+  ]);
+  const allowed = new Set<T>([...allowedMovies, ...allowedTv]);
+
+  return items.filter(
+    (item) => mediaTypeOf(item) === 'person' || allowed.has(item)
   );
 }
